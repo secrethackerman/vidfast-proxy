@@ -56,10 +56,34 @@ Line content: ${line103}`);
     }
 
     const cloudPath = pathMatch[1];
-
-    // Step 6: Return full cloudnestra.com URL
     const finalUrl = `https://cloudnestra.com${cloudPath}`;
-    res.type('text/plain').send(finalUrl);
+
+    // Step 6: Fetch the final Cloudnestra media page
+    const mediaRes = await fetch(finalUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0' }
+    });
+    const mediaHtml = await mediaRes.text();
+
+    // Step 7: Extract file URL from line 482, after 69 characters
+    const mediaLines = mediaHtml.split('\n');
+    if (mediaLines.length < 482) {
+      return res.status(404).send(`Media page too short.
+Cloudnestra media URL: ${finalUrl}`);
+    }
+    const line482 = mediaLines[481];
+    const fileUrl = line482.slice(69).replace(/['";]+/g, '').trim(); // clean quotes/semicolon
+
+    // Step 8: Return HTML snippet with Playerjs
+    const playerHtml = `
+<script src="//files.catbox.moe/wpjrf3.js" type="text/javascript"></script>
+<div id="player"></div>
+
+<script>
+   var player = new Playerjs({id:"player", file:"${fileUrl}"});
+</script>
+    `;
+
+    res.type('text/html').send(playerHtml);
 
   } catch (err) {
     console.error(err);
@@ -68,5 +92,5 @@ Line content: ${line103}`);
 });
 
 app.listen(PORT, () => {
-  console.log(`Cloudnestra proxy running at http://localhost:${PORT}/movie/{id}`);
+  console.log(`Proxy running at http://localhost:${PORT}/movie/{id}`);
 });
