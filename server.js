@@ -1,4 +1,3 @@
-// server.js
 import express from 'express';
 import fetch from 'node-fetch';
 
@@ -10,7 +9,7 @@ app.get('/movie/:id', async (req, res) => {
   const embedUrl = `https://vidsrc.xyz/embed/movie/${id}`;
 
   try {
-    // Step 1: Fetch vidsrc embed page
+    // Step 1: Fetch Vidsrc embed page
     const embedRes = await fetch(embedUrl, {
       headers: { 'User-Agent': 'Mozilla/5.0' }
     });
@@ -22,22 +21,28 @@ app.get('/movie/:id', async (req, res) => {
       return res.status(404).send(`Embed page too short to contain Cloudnestra iframe.
 Embed URL: ${embedUrl}`);
     }
-    const line78 = embedLines[77];
+    let line78 = embedLines[77];
     const srcMatch = line78.match(/src="([^"]+)"/);
     if (!srcMatch) {
       return res.status(404).send(`Could not find Cloudnestra iframe src in line 78.
 Line content: ${line78}`);
     }
 
-    const cloudIframeUrl = srcMatch[1];
+    // Step 3: Normalize URL
+    let cloudIframeUrl = srcMatch[1];
+    if (cloudIframeUrl.startsWith('//')) {
+      cloudIframeUrl = 'https:' + cloudIframeUrl;
+    } else if (!cloudIframeUrl.startsWith('http')) {
+      cloudIframeUrl = new URL(cloudIframeUrl, 'https://vidsrc.xyz').href;
+    }
 
-    // Step 3: Fetch Cloudnestra iframe page
+    // Step 4: Fetch Cloudnestra iframe page
     const cloudRes = await fetch(cloudIframeUrl, {
       headers: { 'User-Agent': 'Mozilla/5.0' }
     });
     const cloudHtml = await cloudRes.text();
 
-    // Step 4: Extract path from line 103, column ~20
+    // Step 5: Extract path from line 103, column ~20
     const cloudLines = cloudHtml.split('\n');
     if (cloudLines.length < 103) {
       return res.status(404).send(`Cloudnestra iframe page too short.
@@ -52,7 +57,7 @@ Line content: ${line103}`);
 
     const cloudPath = pathMatch[1];
 
-    // Step 5: Return full cloudnestra.com URL
+    // Step 6: Return full cloudnestra.com URL
     const finalUrl = `https://cloudnestra.com${cloudPath}`;
     res.type('text/plain').send(finalUrl);
 
