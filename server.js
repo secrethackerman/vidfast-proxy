@@ -1,4 +1,3 @@
-// server.js
 import express from 'express';
 import fetch from 'node-fetch';
 
@@ -10,32 +9,23 @@ app.get('/movie/:id', async (req, res) => {
   const pageUrl = `https://vidsrc.xyz/embed/movie/${id}`;
 
   try {
-    // Step 1: Fetch the vidsrc embed page
-    const pageRes = await fetch(pageUrl, {
-      headers: { 'User-Agent': 'Mozilla/5.0' }
-    });
+    // Step 1: Fetch main page
+    const pageRes = await fetch(pageUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
     const pageHtml = await pageRes.text();
 
-    // Step 2: Find /prorcp/ token
-    const match = pageHtml.match(/\/prorcp\/[A-Za-z0-9+/=]+/);
-    if (!match) return res.status(404).send('prorcp link not found.');
-    const prorcpPath = match[0];
-    const prorcpUrl = new URL(prorcpPath, pageUrl).href;
+    // Step 2: Find prorcp link even if it's inside JS
+    const match = pageHtml.match(/\/prorcp\/[A-Za-z0-9:_-]+/);
+    if (!match) return res.status(404).send('prorcp link not found in HTML.');
+    const prorcpUrl = new URL(match[0], pageUrl).href;
 
-    // Step 3: Fetch the prorcp page
-    const iframeRes = await fetch(prorcpUrl, {
-      headers: { 'User-Agent': 'Mozilla/5.0' }
-    });
-    const iframeHtml = await iframeRes.text();
+    // Step 3: Fetch prorcp page
+    const prorcpRes = await fetch(prorcpUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+    const prorcpHtml = await prorcpRes.text();
 
-    // Step 4: Find direct video link (.m3u8 or .mp4)
-    const videoMatch = iframeHtml.match(/https?:\/\/[^\s"']+\.(m3u8|mp4)/i);
-    if (!videoMatch) return res.status(404).send('Video link not found.');
-    const videoUrl = videoMatch[0];
+    // Step 4: Extract all http(s) links from that HTML
+    const links = prorcpHtml.match(/https?:\/\/[^\s"'<>]+/g) || [];
 
-    // Step 5: Return the direct link
-    res.send(videoUrl);
-
+    res.json({ prorcpUrl, links });
   } catch (err) {
     console.error(err);
     res.status(500).send('Error processing request.');
@@ -43,5 +33,5 @@ app.get('/movie/:id', async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Direct video proxy running at http://localhost:${PORT}/movie/{id}`);
+  console.log(`Debug proxy running: http://localhost:${PORT}/movie/{id}`);
 });
