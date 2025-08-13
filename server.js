@@ -1,44 +1,47 @@
 // server.js
 import express from "express";
 import fetch from "node-fetch";
+import { JSDOM } from "jsdom";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.get("/movie/:id", async (req, res) => {
-  const movieId = req.params.id;
-  const upstreamUrl = `https://vidfast.pro/movie/${movieId}`;
+// Endpoint: /proxy?vidsrc=<encoded_vidsrc_url>
+app.get("/proxy", async (req, res) => {
+  const vidsrcUrl = req.query.vidsrc;
+  if (!vidsrcUrl) return res.status(400).send("Missing vidsrc URL");
 
   try {
-    const response = await fetch(upstreamUrl, {
-      headers: { "User-Agent": "Mozilla/5.0 (compatible; Proxy/1.0)" }
-    });
-    let html = await response.text();
+    // 1. Fetch the vidsrc page
+    const vidsrcResp = await fetch(vidsrcUrl);
+    const vidsrcHtml = await vidsrcResp.text();
 
-    // Remove scripts that open popups
-    // (matches window.open or common ad scripts)
-    html = html.replace(/window\.open[\s\S]*?\);?/gi, "");
-    html = html.replace(/<script[\s\S]*?<\/script>/gi, "");
+    // 2. Parse vidsrc HTML to extract Cloudnestra iframe
+    const dom = new JSDOM(vidsrcHtml);
+    const iframe = dom.window.document.querySelector("#player_iframe") || dom.window.document.querySelector("iframe");
+    if (!iframe) return res.status(404).send("Cloudnestra iframe not found");
 
-    // Inject sandboxed iframe if needed
-    html = html.replace(
-      /<body>/i,
-      `<body><iframe sandbox="allow-scripts allow-same-origin" allowfullscreen style="width:100%;height:100%;border:none;"></iframe>`
-    );
+    const cloudnestraUrl = iframe.src.startsWith("/") 
+      ? new URL(iframe.src, vidsrcUrl).href 
+      : iframe.src;
 
-    // Fix relative URLs
-    html = html.replace(
-      /<head>/i,
-      `<head><base href="https://vidfast.pro/">`
-    );
+    // 3. Fetch Cloudnestra content
+    const cloudResp = await fetch(cloudnestraUrl);
+    let cloudHtml = await cloudResp.text();
 
-    res.set("Content-Type", "text/html; charset=utf-8");
-    res.send(html);
+    // 4. Remove popup scripts (basic)
+    cloudHtml = cloudHtml.replace(/<script[^>]*>[\s\S]*pop_asdf[\s\S]*<\/script>/gi, "");
+
+    // 5. Serve cleaned HTML
+    res.setHeader("Content-Type", "text/html");
+    res.send(cloudHtml);
 
   } catch (err) {
     console.error(err);
-    res.status(500).send("Error fetching movie page.");
+    res.status(500).send("Error fetching or processing page");
   }
 });
 
-app.listen(PORT, () => console.log(`Proxy running on port ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`Proxy running on port ${PORT}`);
+});
