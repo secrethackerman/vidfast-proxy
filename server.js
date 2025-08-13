@@ -1,46 +1,33 @@
 // server.js
-import express from "express";
-import fetch from "node-fetch";
-import { JSDOM } from "jsdom";
+import express from 'express';
+import fetch from 'node-fetch';
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = 3000;
 
-// Route: /video/:id
-app.get("/video/:id", async (req, res) => {
-  const id = req.params.id;
-  if (!id) return res.status(400).send("Missing video ID");
+// The URL you want to iframe
+const TARGET_URL = 'https://example.com';
 
-  const vidsrcUrl = `https://vidsrc.xyz/embed/movie/${id}`;
-
+app.get('/proxy', async (req, res) => {
   try {
-    // 1. Fetch the vidsrc page
-    const vidsrcResp = await fetch(vidsrcUrl);
-    const vidsrcHtml = await vidsrcResp.text();
+    const response = await fetch(TARGET_URL);
+    let html = await response.text();
 
-    // 2. Extract Cloudnestra iframe
-    const dom = new JSDOM(vidsrcHtml);
-    const iframe = dom.window.document.querySelector("#player_iframe") || dom.window.document.querySelector("iframe");
-    if (!iframe) return res.status(404).send("Cloudnestra iframe not found");
+    // Remove the specific script by matching a unique part of it
+    html = html.replace(
+      /<script>[\s\S]*?sandboxDetection[\s\S]*?<\/script>/,
+      ''
+    );
 
-    const cloudnestraUrl = iframe.src.startsWith("/") 
-      ? new URL(iframe.src, vidsrcUrl).href 
-      : iframe.src;
+    // Optional: you can also strip other inline scripts or malicious scripts here
 
-    // 3. Fetch Cloudnestra page content
-    const cloudResp = await fetch(cloudnestraUrl);
-    const cloudHtml = await cloudResp.text();
-
-    // 4. Serve it directly
-    res.setHeader("Content-Type", "text/html");
-    res.send(cloudHtml);
-
+    res.send(html);
   } catch (err) {
     console.error(err);
-    res.status(500).send("Error fetching or processing page");
+    res.status(500).send('Error fetching target page.');
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`Proxy running on port ${PORT}`);
+  console.log(`Proxy server running at http://localhost:${PORT}/proxy`);
 });
