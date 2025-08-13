@@ -16,56 +16,25 @@ app.get('/movie/:id', async (req, res) => {
     });
     const pageHtml = await pageRes.text();
 
-    // Step 2: Extract /prorcp/ link
-    const prorcpMatch = pageHtml.match(/\/prorcp\/[A-Za-z0-9+/=]+/);
-    if (!prorcpMatch) {
-      const start = 4 * 500; // 5th 500-character block
-      const debugSnippet = pageHtml.slice(start, start + 500);
-      return res.status(404).send(`prorcp link not found in embed page.
-Embed URL: ${pageUrl}
-HTTP Status: ${pageRes.status}
-Characters 2001-2500 of page: ${debugSnippet}`);
-    }
-    const prorcpUrl = new URL(prorcpMatch[0], pageUrl).href;
-
-    // Step 3: Fetch prorcp page
-    const prorcpRes = await fetch(prorcpUrl, {
-      headers: { 'User-Agent': 'Mozilla/5.0' }
-    });
-    const prorcpHtml = await prorcpRes.text();
-
-    if (prorcpRes.status !== 200) {
-      const start = 4 * 500; // 5th block
-      const debugSnippet = prorcpHtml.slice(start, start + 500);
-      return res.status(500).send(`Failed fetching prorcp page.
-prorcp URL: ${prorcpUrl}
-HTTP Status: ${prorcpRes.status}
-Characters 2001-2500: ${debugSnippet}`);
+    // Step 2: Extract Cloudnestra src from line 78
+    const pageLines = pageHtml.split('\n');
+    if (pageLines.length < 78) {
+      return res.status(404).send(`Embed page too short to contain Cloudnestra link.
+Embed URL: ${pageUrl}`);
     }
 
-    // Step 4: Find 'var player = new Playerjs' without // in front
-    const playerMatch = prorcpHtml.match(/^(?!.*\/\/).*var\s+player\s*=\s*new\s+Playerjs\(([\s\S]*?)\);/m);
-    if (!playerMatch) {
-      const start = 4 * 500;
-      const debugSnippet = prorcpHtml.slice(start, start + 500);
-      return res.status(404).send(`Playerjs code not found in prorcp page.
-prorcp URL: ${prorcpUrl}
-Characters 2001-2500: ${debugSnippet}`);
+    // Line 78 (0-indexed 77)
+    const line78 = pageLines[77];
+    const srcMatch = line78.match(/src="([^"]+)"/);
+    if (!srcMatch) {
+      return res.status(404).send(`Could not find Cloudnestra src in line 78.
+Line content: ${line78}`);
     }
 
-    const playerCode = playerMatch[1];
+    const cloudnestraUrl = srcMatch[1];
 
-    // Step 5: Extract file: '...' from Playerjs config
-    const fileMatch = playerCode.match(/file\s*:\s*['"]([^'"]+)['"]/);
-    if (!fileMatch) {
-      return res.status(404).send(`File URL not found in Playerjs config.
-Playerjs code snippet (first 200 chars): ${playerCode.slice(0, 200)}`);
-    }
-
-    const fileUrl = fileMatch[1];
-
-    // Step 6: Return in plain text
-    res.type('text/plain').send(fileUrl);
+    // Step 3: Return Cloudnestra URL in plaintext
+    res.type('text/plain').send(cloudnestraUrl);
 
   } catch (err) {
     console.error(err);
@@ -74,5 +43,5 @@ Playerjs code snippet (first 200 chars): ${playerCode.slice(0, 200)}`);
 });
 
 app.listen(PORT, () => {
-  console.log(`Direct file proxy running at http://localhost:${PORT}/movie/{id}`);
+  console.log(`Cloudnestra proxy running at http://localhost:${PORT}/movie/{id}`);
 });
