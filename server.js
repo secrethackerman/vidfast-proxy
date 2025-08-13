@@ -5,21 +5,24 @@ import fetch from 'node-fetch';
 const app = express();
 const PORT = 3000;
 
-// The URL you want to iframe
-const TARGET_URL = 'https://example.com';
+// Proxy endpoint
+// Example: http://localhost:3000/embed/movie/1234
+app.get('/embed/movie/:id', async (req, res) => {
+  const { id } = req.params;
+  const targetUrl = `https://vidsrc.xyz/embed/movie/${id}`;
 
-app.get('/proxy', async (req, res) => {
   try {
-    const response = await fetch(TARGET_URL);
+    const response = await fetch(targetUrl);
     let html = await response.text();
 
-    // Remove the specific script by matching a unique part of it
+    // Remove the anti-iframe script by matching a unique part
     html = html.replace(
       /<script>[\s\S]*?sandboxDetection[\s\S]*?<\/script>/,
       ''
     );
 
-    // Optional: you can also strip other inline scripts or malicious scripts here
+    // Optionally, remove other potentially malicious scripts
+    // html = html.replace(/<script[\s\S]*?<\/script>/gi, '');
 
     res.send(html);
   } catch (err) {
@@ -29,5 +32,5 @@ app.get('/proxy', async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Proxy server running at http://localhost:${PORT}/proxy`);
+  console.log(`Proxy server running at http://localhost:${PORT}/embed/movie/{id}`);
 });
