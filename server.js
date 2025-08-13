@@ -5,32 +5,43 @@ import fetch from 'node-fetch';
 const app = express();
 const PORT = 3000;
 
-// Proxy endpoint
-// Example: http://localhost:3000/embed/movie/1234
-app.get('/embed/movie/:id', async (req, res) => {
+app.get('/movie/:id', async (req, res) => {
   const { id } = req.params;
-  const targetUrl = `https://vidsrc.xyz/embed/movie/${id}`;
+  const pageUrl = `https://vidsrc.xyz/embed/movie/${id}`;
 
   try {
-    const response = await fetch(targetUrl);
-    let html = await response.text();
+    // Step 1: Fetch the vidsrc embed page
+    const pageRes = await fetch(pageUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0' }
+    });
+    const pageHtml = await pageRes.text();
 
-    // Remove the anti-iframe script by matching a unique part
-    html = html.replace(
-      /<script>[\s\S]*?sandboxDetection[\s\S]*?<\/script>/,
-      ''
-    );
+    // Step 2: Find /prorcp/ token
+    const match = pageHtml.match(/\/prorcp\/[A-Za-z0-9+/=]+/);
+    if (!match) return res.status(404).send('prorcp link not found.');
+    const prorcpPath = match[0];
+    const prorcpUrl = new URL(prorcpPath, pageUrl).href;
 
-    // Optionally, remove other potentially malicious scripts
-    // html = html.replace(/<script[\s\S]*?<\/script>/gi, '');
+    // Step 3: Fetch the prorcp page
+    const iframeRes = await fetch(prorcpUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0' }
+    });
+    const iframeHtml = await iframeRes.text();
 
-    res.send(html);
+    // Step 4: Find direct video link (.m3u8 or .mp4)
+    const videoMatch = iframeHtml.match(/https?:\/\/[^\s"']+\.(m3u8|mp4)/i);
+    if (!videoMatch) return res.status(404).send('Video link not found.');
+    const videoUrl = videoMatch[0];
+
+    // Step 5: Return the direct link
+    res.send(videoUrl);
+
   } catch (err) {
     console.error(err);
-    res.status(500).send('Error fetching target page.');
+    res.status(500).send('Error processing request.');
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`Proxy server running at http://localhost:${PORT}/embed/movie/{id}`);
+  console.log(`Direct video proxy running at http://localhost:${PORT}/movie/{id}`);
 });
