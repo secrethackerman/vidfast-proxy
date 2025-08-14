@@ -19,20 +19,19 @@ app.get("/embed/movie/:id", async (req, res) => {
         return res.status(500).send(`<h1>Error fetching embed page</h1><p>${err}</p>`);
     }
 
-    // Search for Cloudnestra RCP URL on line 78
     const embedLines = embedHtml.split("\n");
-    let cloudUrlLine = embedLines[77] || "";
-    const cloudMatch = cloudUrlLine.match(/\/\/cloudnestra\.com\/rcp[^\s'"]*/);
+    let cloudLine = embedLines[102] || "";
+    const cloudMatch = cloudLine.match(/'([^']+)'/); // only single quotes on line
     if (!cloudMatch) {
-        console.error(`[!] Cloudnestra RCP URL not found on line 78`);
+        console.error(`[!] Cloudnestra URL not found on line 103`);
         return res.status(500).send(`
             <h1>Error</h1>
-            <p>Cloudnestra RCP URL not found on line 78</p>
-            <pre>${cloudUrlLine.replace(/</g,"&lt;").replace(/>/g,"&gt;")}</pre>
+            <p>Cloudnestra URL not found on line 103</p>
+            <pre>${cloudLine.replace(/</g,"&lt;").replace(/>/g,"&gt;")}</pre>
         `);
     }
 
-    const cloudUrl = "https:" + cloudMatch[0];
+    const cloudUrl = "https://cloudnestra.com" + cloudMatch[1];
     console.log(`[2] Extracted Cloudnestra URL: ${cloudUrl}`);
 
     // Fetch prorcp page
@@ -62,19 +61,6 @@ app.get("/embed/movie/:id", async (req, res) => {
 
     const playerUrl = playerMatch[1];
     console.log(`[3] Extracted Playerjs URL: ${playerUrl}`);
-
-    // Fetch Playerjs URL content (the .m3u8 or manifest)
-    let playerHtml;
-    try {
-        const r = await fetch(playerUrl);
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        playerHtml = await r.text();
-    } catch (err) {
-        console.error(`[!] Failed fetching Playerjs URL: ${err}`);
-        return res.status(500).send(`<h1>Error fetching Playerjs URL</h1><p>${err}</p>`);
-    }
-
-    console.log(`[4] Successfully fetched Playerjs content, returning HTML`);
 
     // Return HTML with player embedded
     res.send(`
