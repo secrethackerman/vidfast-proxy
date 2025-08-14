@@ -11,66 +11,50 @@ app.get("/embed/movie/:id", async (req, res) => {
   try {
     console.log(`[1] Fetching embed page: ${embedUrl}`);
     const embedResp = await fetch(embedUrl);
-    if (!embedResp.ok) throw new Error(`Embed fetch failed: ${embedResp.status}`);
+    if (!embedResp.ok) throw new Error(`HTTP ${embedResp.status}`);
     const embedHtml = await embedResp.text();
 
-    // Find cloudnestra RCP URL
-    const matchRcp = embedHtml.match(/\/\/cloudnestra\.com\/rcp[^\s'"]+/);
-    if (!matchRcp) throw new Error("cloudnestra.com RCP link not found");
-    const cloudUrl = "https:" + matchRcp[0];
-    console.log(`[2] Extracted cloudnestra URL: ${cloudUrl}`);
+    // Find cloudnestra prorcp link
+    const cloudMatch = embedHtml.match(/\/\/cloudnestra\.com\/rcp[^\s"'<>]*/);
+    if (!cloudMatch) {
+      console.error("[!] Cloudnestra link not found on embed page line ~78");
+      return res.status(404).send("Cloudnestra link not found");
+    }
+    const prorcpUrl = `https:${cloudMatch[0]}`;
+    console.log(`[2] Extracted Cloudnestra URL: ${prorcpUrl}`);
 
-    // Fetch prorcp page
-    const prorcpResp = await fetch(cloudUrl);
-    if (!prorcpResp.ok) throw new Error(`prorcp fetch failed: ${prorcpResp.status}`);
+    // Fetch the prorcp page
+    const prorcpResp = await fetch(prorcpUrl);
+    if (!prorcpResp.ok) throw new Error(`HTTP ${prorcpResp.status}`);
     const prorcpHtml = await prorcpResp.text();
 
-    // Search for Playerjs file URL anywhere
-    const playerMatch = prorcpHtml.match(/file:\s*['"]([^'"]+)['"]/);
-    if (!playerMatch) throw new Error("Playerjs file URL not found in prorcp page");
-    const playerUrl = playerMatch[1];
+    // Extract Playerjs file URL from the prorcp HTML
+    const matchPlayerjs = prorcpHtml.match(/Playerjs\(\{[^}]*file:\s*['"]([^'"]+)['"]/);
+    if (!matchPlayerjs) {
+      console.error("[!] Playerjs file URL not found in prorcp page");
+      return res.status(404).send("Playerjs file URL not found");
+    }
+    const playerUrl = matchPlayerjs[1];
     console.log(`[3] Extracted Playerjs URL: ${playerUrl}`);
 
-    if (playerUrl.endsWith(".m3u8")) {
-      const playlistResp = await fetch(playerUrl);
-      if (!playlistResp.ok) throw new Error(`Playlist fetch failed: ${playlistResp.status}`);
-      let playlistText = await playlistResp.text();
+    // Return a minimal HTML with Playerjs
+    const html = `
+      <script src="//files.catbox.moe/wpjrf3.js" type="text/javascript"></script>
+      <div id="player"></div>
+      <script>
+        var player = new Playerjs({id:"player", file:"${playerUrl}"});
+      </script>
+    `;
 
-      playlistText = playlistText.replace(/^([^\n]*\.ts)$/gm, (match) => {
-        const segmentUrl = new URL(match, playerUrl).href;
-        return `/segment?url=${encodeURIComponent(segmentUrl)}`;
-      });
+    res.setHeader("Content-Type", "text/html");
+    res.send(html);
 
-      res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
-      return res.send(playlistText);
-    } else {
-      res.send(`
-        <script src="//files.catbox.moe/wpjrf3.js" type="text/javascript"></script>
-        <div id="player"></div>
-        <script>
-           var player = new Playerjs({id:"player", file:"${playerUrl}"});
-        </script>
-      `);
-    }
   } catch (err) {
-    console.error("[ERROR]", err);
-    res.status(500).send(err.message);
+    console.error("[!] Error:", err.message);
+    res.status(500).send("Internal server error");
   }
 });
 
-app.get("/segment", async (req, res) => {
-  const url = req.query.url;
-  if (!url) return res.status(400).send("No URL provided");
-
-  try {
-    const segResp = await fetch(url);
-    if (!segResp.ok) throw new Error(`Segment fetch failed: ${segResp.status}`);
-    res.setHeader("Content-Type", "video/MP2T");
-    segResp.body.pipe(res);
-  } catch (err) {
-    console.error("[SEGMENT ERROR]", err);
-    res.status(500).send(err.message);
-  }
+app.listen(PORT, () => {
+  console.log(`Proxy server running on port ${PORT}`);
 });
-
-app.listen(PORT, () => console.log(`Proxy server running on port ${PORT}`));
