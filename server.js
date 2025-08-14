@@ -6,112 +6,80 @@ const PORT = process.env.PORT || 10000;
 
 app.get("/embed/movie/:id", async (req, res) => {
     const movieId = req.params.id;
-    console.log(`[INFO] Requested ID: ${movieId}`);
+    console.log(`[INFO] Incoming request for movie ID: ${movieId}`);
 
     try {
+        // Step 1: Get the embed page from vidsrc
         const embedUrl = `https://vidsrc.xyz/embed/movie/${movieId}`;
-        console.log(`[STEP] Fetching embed page: ${embedUrl}`);
-
+        console.log(`[STEP 1] Fetching embed page: ${embedUrl}`);
         const embedResp = await fetch(embedUrl);
         const embedHtml = await embedResp.text();
+        const embedLines = embedHtml.split("\n");
 
-        const lines = embedHtml.split("\n");
-        const line78 = lines[77] || "";
-        const matchCloud = line78.match(/\/\/cloudnestra\.com\/prorcp[^\"]+/);
-
-        if (!matchCloud) {
-            console.error(`[ERROR] Cloudnestra link not found on line 78: ${line78}`);
-            return res.status(500).send(`<h1>Error: Cloudnestra link not found</h1><pre>${line78}</pre>`);
+        // Step 2: Search for Cloudnestra link anywhere in the page (loose match)
+        let cloudnestraUrl = null;
+        for (const line of embedLines) {
+            const matchCloud = line.match(/\/\/cloudnestra\.com\/[^\"]+/);
+            if (matchCloud) {
+                cloudnestraUrl = "https:" + matchCloud[0];
+                break;
+            }
         }
 
-        const prorcpUrl = `https:${matchCloud[0]}`;
-        console.log(`[STEP] Found prorcp URL: ${prorcpUrl}`);
+        if (!cloudnestraUrl) {
+            console.error("[ERROR] Cloudnestra link not found in embed page");
+            return res
+                .status(500)
+                .send(`<h1>Error: Cloudnestra link not found</h1><pre>${embedLines[77] || "Line 78 not found"}</pre>`);
+        }
 
-        const prorcpResp = await fetch(prorcpUrl);
+        console.log(`[STEP 2] Extracted Cloudnestra URL: ${cloudnestraUrl}`);
+
+        // Step 3: Fetch prorcp page
+        const prorcpResp = await fetch(cloudnestraUrl);
         const prorcpHtml = await prorcpResp.text();
-
         const prorcpLines = prorcpHtml.split("\n");
-        const line103 = prorcpLines[102] || "";
-        const matchPath = line103.match(/'([^']+)'/);
 
-        if (!matchPath) {
-            console.error(`[ERROR] Path not found on line 103: ${line103}`);
-            return res.status(500).send(`<h1>Error: Path not found</h1><pre>${line103}</pre>`);
+        // Step 4: Extract path from line 103 (zero-index = 102)
+        const targetLine = prorcpLines[102] || "";
+        const pathMatch = targetLine.match(/'([^']+)'/);
+        if (!pathMatch) {
+            console.error("[ERROR] Playerjs file URL not found on line 103");
+            return res.status(500).send(`<h1>Playerjs file URL not found on line 103:</h1><pre>${targetLine}</pre>`);
         }
 
-        const cloudPathUrl = `https://cloudnestra.com${matchPath[1]}`;
-        console.log(`[STEP] Found cloud path URL: ${cloudPathUrl}`);
+        const path = pathMatch[1];
+        const finalUrl = path.startsWith("http") ? path : `https://cloudnestra.com${path}`;
+        console.log(`[STEP 4] Extracted path: ${finalUrl}`);
 
-        const pathResp = await fetch(cloudPathUrl);
-        const pathHtml = await pathResp.text();
-
-        const pathLines = pathHtml.split("\n");
-        const line482 = pathLines[481] || "";
-        const m3u8Match = line482.match(/file:\s*'([^']+)'/);
+        // Step 5: Fetch final page to find m3u8 in line 482 (zero-index = 481)
+        const finalResp = await fetch(finalUrl);
+        const finalHtml = await finalResp.text();
+        const finalLines = finalHtml.split("\n");
+        const line482 = finalLines[481] || "";
+        const m3u8Match = line482.match(/'(https?:\/\/[^']+\.m3u8)'/);
 
         if (!m3u8Match) {
-            console.error(`[ERROR] Playerjs file URL not found on line 482: ${line482}`);
-            return res.status(500).send(`<h1>Error: Playerjs file URL not found</h1><pre>${line482}</pre>`);
+            console.error("[ERROR] m3u8 URL not found in line 482");
+            return res.status(500).send(`<h1>m3u8 URL not found on line 482:</h1><pre>${line482}</pre>`);
         }
 
-        let m3u8Url = m3u8Match[1];
-        if (m3u8Url.startsWith("/")) {
-            const origin = new URL(cloudPathUrl).origin;
-            m3u8Url = `${origin}${m3u8Url}`;
+        const m3u8Url = m3u8Match[1];
+        console.log(`[STEP 5] Extracted m3u8 URL: ${m3u8Url}`);
+
+        // Step 6: Fetch the m3u8 and return it directly
+        const m3u8Resp = await fetch(m3u8Url);
+        if (!m3u8Resp.ok) {
+            console.error(`[ERROR] Failed to fetch m3u8: ${m3u8Resp.status} ${m3u8Resp.statusText}`);
+            return res.status(500).send(`<h1>Failed to fetch m3u8</h1><pre>Status: ${m3u8Resp.status}</pre>`);
         }
 
-        console.log(`[SUCCESS] Found m3u8 URL: ${m3u8Url}`);
-
-        // Return an HTML page pointing Playerjs to our m3u8-proxy
-        const proxyUrl = `/m3u8-proxy?url=${encodeURIComponent(m3u8Url)}`;
-        res.send(`
-            <html>
-            <body>
-                <script src="https://cdn.jsdelivr.net/npm/playerjs@1"></script>
-                <div id="player"></div>
-                <script>
-                    var player = new Playerjs({id:"player", file:"${proxyUrl}"});
-                </script>
-            </body>
-            </html>
-        `);
+        const m3u8Text = await m3u8Resp.text();
+        res.type("application/vnd.apple.mpegurl").send(m3u8Text);
 
     } catch (err) {
-        console.error(`[UNEXPECTED ERROR] ${err.stack}`);
-        res.status(500).send(`<h1>Unexpected error</h1><pre>${err.message}</pre>`);
-    }
-});
-
-// New m3u8 proxy handler
-app.get("/m3u8-proxy", async (req, res) => {
-    const targetUrl = req.query.url;
-    if (!targetUrl) {
-        return res.status(400).send("Missing URL parameter");
-    }
-
-    console.log(`[M3U8-PROXY] Fetching playlist: ${targetUrl}`);
-
-    try {
-        const playlistResp = await fetch(targetUrl);
-        if (!playlistResp.ok) {
-            throw new Error(`Failed to fetch playlist: ${playlistResp.status}`);
-        }
-
-        let playlist = await playlistResp.text();
-        const baseUrl = new URL(targetUrl).origin;
-
-        // Rewrite relative segment paths
-        playlist = playlist.replace(/^(?!#)(.*\.m3u8|.*\.ts)/gm, (match) => {
-            if (match.startsWith("http")) return match;
-            return `${baseUrl}${match.startsWith("/") ? match : "/" + match}`;
-        });
-
-        res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
-        res.send(playlist);
-
-    } catch (err) {
-        console.error(`[M3U8-PROXY ERROR] ${err.stack}`);
-        res.status(500).send(`Error fetching m3u8: ${err.message}`);
+        console.error("[FATAL ERROR]", err);
+        res.status(500).send(`<h1>Unexpected error</h1><pre>${err.stack}</pre>`);
     }
 });
 
