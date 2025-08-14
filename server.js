@@ -1,105 +1,97 @@
-const fetch = require("node-fetch");
+import fetch from "node-fetch";
 
-async function getPlayerHtml(embedUrl) {
+async function getProrcpIframe(embedUrl) {
     try {
-        // Step 1: Fetch embed page
-        const embedRes = await fetch(embedUrl);
-        const embedText = await embedRes.text();
+        const res = await fetch(embedUrl);
+        if (!res.ok) throw new Error(`HTTP status ${res.status}`);
+        const text = await res.text();
+        const lines = text.split("\n");
+        let iframeSrc = null;
 
-        // Step 2: Find prorcp iframe
-        const prorcpMatch = embedText.match(/src=['"]([^'"]*prorcp[^'"]*)['"]/);
-        if (!prorcpMatch) {
-            console.error("prorcp iframe not found. First 500 chars:\n", embedText.slice(0, 500));
-            return;
-        }
-        const prorcpUrl = new URL(prorcpMatch[1], embedUrl).href;
-
-        // Step 3: Fetch prorcp page
-        const prorcpRes = await fetch(prorcpUrl);
-        const prorcpText = await prorcpRes.text();
-
-        // Step 4: Find Cloudnestra link (line 78)
-        const prorcpLines = prorcpText.split("\n");
-        if (prorcpLines.length < 78) {
-            console.error("Unexpected prorcp page structure, less than 78 lines");
-            return;
-        }
-        let cloudLinkLine = prorcpLines[77];
-        const cloudMatch = cloudLinkLine.match(/src=['"]([^'"]+)['"]/);
-        if (!cloudMatch) {
-            console.error("Cloudnestra src not found on line 78:", cloudLinkLine);
-            return;
-        }
-        const cloudUrl = cloudMatch[1].startsWith("//")
-            ? "https:" + cloudMatch[1]
-            : cloudMatch[1];
-
-        // Step 5: Fetch Cloudnestra page
-        const cloudRes = await fetch(cloudUrl);
-        const cloudText = await cloudRes.text();
-
-        // Step 6: Find Playerjs M3U8 URL (line 482)
-        const cloudLines = cloudText.split("\n");
-        if (cloudLines.length < 482) {
-            console.error("Unexpected Cloudnestra page structure, less than 482 lines");
-            return;
-        }
-        let playerLine = cloudLines[481];
-        const playerMatch = playerLine.match(/file:\s*['"]([^'"]+)['"]/);
-        if (!playerMatch) {
-            console.error("Playerjs file not found on line 482:", playerLine);
-            return;
-        }
-
-        // Step 7: Convert relative path to full URL
-        let m3u8Url = playerMatch[1].trim();
-        if (m3u8Url.startsWith("/")) {
-            m3u8Url = "https://cloudnestra.com" + m3u8Url;
-        }
-
-        // Step 8: Fetch M3U8 playlist and pick highest resolution
-        const m3u8Res = await fetch(m3u8Url);
-        const m3u8Text = await m3u8Res.text();
-        const lines = m3u8Text.split("\n");
-
-        let bestUrl = null;
-        let bestRes = 0;
-
-        for (let i = 0; i < lines.length; i++) {
-            const line = lines[i];
-            if (line.startsWith("#EXT-X-STREAM-INF")) {
-                const resMatch = line.match(/RESOLUTION=(\d+)x(\d+)/);
-                if (resMatch) {
-                    const width = parseInt(resMatch[1], 10);
-                    const height = parseInt(resMatch[2], 10);
-                    const nextLine = lines[i + 1];
-                    if (width * height > bestRes) {
-                        bestRes = width * height;
-                        bestUrl = nextLine.startsWith("/")
-                            ? "https://cloudnestra.com" + nextLine
-                            : nextLine;
-                    }
-                }
+        for (const line of lines) {
+            const match = line.match(/<iframe[^>]+src="(\/prorcp\/[^"]+)"/);
+            if (match) {
+                iframeSrc = match[1];
+                break;
             }
         }
 
-        if (!bestUrl) {
-            console.error("No valid stream found in M3U8 playlist");
-            return;
+        if (!iframeSrc) {
+            const snippet = lines.slice(0, 20).join("\n");
+            throw new Error(`prorcp link not found in embed page.\nEmbed URL: ${embedUrl}\nFirst 500 chars:\n${snippet}`);
         }
 
-        // Step 9: Return Playerjs HTML snippet
-        return `
-<script src="//files.catbox.moe/wpjrf3.js" type="text/javascript"></script>
-<div id="player"></div>
-<script>
-   var player = new Playerjs({id:"player", file:"${bestUrl}"});
-</script>
-        `.trim();
-
+        return iframeSrc;
     } catch (err) {
-        console.error("Unexpected error:", err);
+        throw new Error(`Failed to fetch embed page: ${err.message}`);
     }
 }
 
-module.exports = { getPlayerHtml };
+async function getCloudnestraLink(prorcpUrl, baseUrl) {
+    try {
+        const res = await fetch(prorcpUrl);
+        if (!res.ok) throw new Error(`HTTP status ${res.status}`);
+        const text = await res.text();
+        const lines = text.split("\n");
+
+        if (lines.length < 78) throw new Error(`prorcp page too short`);
+        const line78 = lines[77]; // 0-indexed
+        const match = line78.match(/src="([^"]+)"/);
+        if (!match) throw new Error(`Cloudnestra link not found on line 78`);
+        const url = match[1].startsWith("http") ? match[1] : `${baseUrl}${match[1]}`;
+        return url;
+    } catch (err) {
+        throw new Error(`Failed to fetch prorcp page: ${err.message}`);
+    }
+}
+
+async function getCloudnestraPath(cloudnestraUrl) {
+    try {
+        const res = await fetch(cloudnestraUrl);
+        if (!res.ok) throw new Error(`HTTP status ${res.status}`);
+        const text = await res.text();
+        const lines = text.split("\n");
+
+        if (lines.length < 103) throw new Error(`Cloudnestra page too short`);
+        const line103 = lines[102]; // 0-indexed
+        const path = line103.slice(19).match(/[^"']+/); // after 20 chars
+        if (!path) throw new Error(`Path not found on line 103`);
+        return `https://cloudnestra.com${path[0]}`;
+    } catch (err) {
+        throw new Error(`Failed to fetch Cloudnestra URL: ${err.message}`);
+    }
+}
+
+async function getFinalPlayerJs(finalUrl) {
+    try {
+        const res = await fetch(finalUrl);
+        if (!res.ok) throw new Error(`HTTP status ${res.status}`);
+        const text = await res.text();
+        const lines = text.split("\n");
+
+        if (lines.length < 482) throw new Error(`Final Cloudnestra page too short`);
+        const line482 = lines[481]; // 0-indexed
+        const snippet = line482.slice(68); // after 69 characters
+        if (!snippet) throw new Error(`Player URL not found on line 482`);
+        return snippet;
+    } catch (err) {
+        throw new Error(`Failed to fetch final Playerjs page: ${err.message}`);
+    }
+}
+
+export async function fetchMovie(embedUrl) {
+    try {
+        const prorcpPath = await getProrcpIframe(embedUrl);
+        const prorcpUrl = new URL(prorcpPath, embedUrl).href;
+
+        const cloudnestraUrl = await getCloudnestraLink(prorcpUrl, "https://cloudnestra.com");
+
+        const finalCloudnestraUrl = await getCloudnestraPath(cloudnestraUrl);
+
+        const playerSnippet = await getFinalPlayerJs(finalCloudnestraUrl);
+
+        return playerSnippet;
+    } catch (err) {
+        return `Unexpected error: ${err.message}`;
+    }
+}
