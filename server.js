@@ -61,7 +61,9 @@ app.get("/embed/movie/:id", async (req, res) => {
         const cloudText = await cloudResp.text();
         const cloudLines = cloudText.split("\n");
         const line482 = cloudLines[481] || "";
-        const playerMatch = line482.match(/file:"(.+?)"/);
+
+        // Updated regex: get the URL in single quotes after file:
+        const playerMatch = line482.match(/file:\s*'(.+?)'/);
         if (!playerMatch) {
             console.error(`[Error] Playerjs file URL not found on line 482`);
             console.error(`Line 482 content: ${line482}`);
