@@ -4,77 +4,64 @@ import fetch from "node-fetch";
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-async function fetchText(url) {
-  try {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`HTTP ${res.status} on ${url}`);
-    return await res.text();
-  } catch (err) {
-    throw new Error(`Failed to fetch ${url}: ${err.message}`);
-  }
-}
-
-function getLine(text, lineNumber) {
-  const lines = text.split("\n");
-  return lines[lineNumber - 1] || "";
-}
-
-app.get("/movie/:id", async (req, res) => {
-  const embedId = req.params.id;
+app.get("/embed/movie/:id", async (req, res) => {
+  const { id } = req.params;
+  const embedUrl = `https://vidsrc.xyz/embed/movie/${id}`;
 
   try {
     // Step 1: Fetch embed page
-    const embedUrl = `https://vidsrc.xyz/embed/movie/${embedId}`;
-    const embedPage = await fetchText(embedUrl);
+    const embedResp = await fetch(embedUrl);
+    if (!embedResp.ok) throw new Error(`Failed to fetch embed page: ${embedResp.status}`);
+    const embedText = await embedResp.text();
+    const embedLines = embedText.split("\n");
 
-    // Step 2: Extract prorcp URL from line 78, after column 30
-    const line78 = getLine(embedPage, 78);
-    const prorcpMatch = line78.match(/src="(\/\/[^"]+)"/);
-    if (!prorcpMatch) {
-      return res.status(500).send({
-        error: "prorcp link not found",
-        embedUrl,
-        line78: line78.slice(0, 500),
-      });
-    }
-    const prorcpUrl = `https:${prorcpMatch[1]}`;
-
-    // Step 3: Fetch prorcp page and extract Cloudnestra path from line 103, 20 chars in
-    const prorcpPage = await fetchText(prorcpUrl);
-    const line103 = getLine(prorcpPage, 103);
-    const cloudPath = line103.slice(20).match(/\S+/)?.[0];
-    if (!cloudPath) {
-      return res.status(500).send({
-        error: "Cloudnestra path not found",
-        prorcpUrl,
-        line103,
-      });
-    }
-    const cloudUrl = `https://cloudnestra.com${cloudPath}`;
-
-    // Step 4: Fetch Cloudnestra URL, extract Playerjs file from line 482, after 69 chars
-    const cloudPage = await fetchText(cloudUrl);
-    const line482 = getLine(cloudPage, 482);
-    const playerFile = line482.slice(69).match(/["']([^"']+)["']/)?.[1];
-    if (!playerFile) {
-      return res.status(500).send({
-        error: "Playerjs file not found",
-        cloudUrl,
-        line482,
-      });
+    // Step 2: Find prorcp URL
+    const prorcpLine = embedLines.find(line => line.includes("/prorcp/"));
+    if (!prorcpLine) {
+      const snippet = embedText.slice(0, 500);
+      throw new Error(`Prorcp link not found in embed page.\nEmbed URL: ${embedUrl}\nFirst 500 chars:\n${snippet}`);
     }
 
-    // Step 5: Return Playerjs HTML snippet
-    const playerHtml = `<script src="//files.catbox.moe/wpjrf3.js" type="text/javascript"></script>
-<div id="player"></div>
-<script>
-   var player = new Playerjs({id:"player", file:"${playerFile}"});
-</script>`;
+    let prorcpPath = prorcpLine.match(/\/prorcp\/[^\s'"]+/);
+    if (!prorcpPath) throw new Error("Prorcp path regex failed");
+    prorcpPath = prorcpPath[0];
 
-    res.set("Content-Type", "text/html");
-    res.send(playerHtml);
+    const prorcpUrl = `https://cloudnestra.com${prorcpPath}`;
+
+    // Step 3: Fetch prorcp page
+    const prorcpResp = await fetch(prorcpUrl);
+    if (!prorcpResp.ok) throw new Error(`Failed to fetch prorcp page: ${prorcpResp.status}`);
+    const prorcpText = await prorcpResp.text();
+    const prorcpLines = prorcpText.split("\n");
+
+    // Step 4: Extract Cloudnestra player URL (line 78, after column 30)
+    if (prorcpLines.length < 78) throw new Error("Prorcp page too short to find Cloudnestra URL");
+    let cloudLine = prorcpLines[77].slice(30).trim();
+    cloudLine = cloudLine.replace(/^['"]|['"]$/g, ""); // strip quotes
+    const cloudUrl = `https://cloudnestra.com${cloudLine}`;
+
+    // Step 5: Fetch Cloudnestra page
+    const cloudResp = await fetch(cloudUrl);
+    if (!cloudResp.ok) throw new Error(`Failed to fetch Cloudnestra page: ${cloudResp.status}`);
+    const cloudText = await cloudResp.text();
+    const cloudLines = cloudText.split("\n");
+
+    // Step 6: Extract PlayerJS file URL (line 482, after 69 chars)
+    if (cloudLines.length < 482) throw new Error("Cloudnestra page too short to find PlayerJS URL");
+    let playerLine = cloudLines[481].slice(69).trim();
+    playerLine = playerLine.replace(/^['"]|['"]$/g, ""); // strip quotes
+
+    // Step 7: Fetch final m3u8
+    const finalResp = await fetch(playerLine);
+    if (!finalResp.ok) throw new Error(`Failed to fetch final URL: ${finalResp.status}`);
+    const m3u8Text = await finalResp.text();
+
+    res.setHeader("Content-Type", "text/plain");
+    res.send(m3u8Text);
+
   } catch (err) {
-    res.status(500).send({ error: err.message });
+    console.error(err);
+    res.status(500).send(`Unexpected error: ${err.message}`);
   }
 });
 
