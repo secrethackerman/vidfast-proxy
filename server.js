@@ -46,8 +46,7 @@ app.get("/embed/movie/:id", async (req, res) => {
     if (playerFileUrl.startsWith("/")) {
       playerFileUrl = "https://cloudnestra.com" + playerFileUrl;
     }
-    const proxiedUrl = `${req.protocol}://${req.get("host")}/m3u8-proxy?url=${encodeURIComponent(playerFileUrl)}`;
-    console.log(`Found Playerjs file URL (proxied): ${proxiedUrl}`);
+    console.log(`Playerjs file URL: ${playerFileUrl}`);
 
     // Fetch Playerjs file page
     const playerResp = await fetch(playerFileUrl);
@@ -73,45 +72,14 @@ app.get("/embed/movie/:id", async (req, res) => {
       <div id="player"></div>
       <script>
         var player = new Playerjs({
-          id: "player",
-          file: '${proxiedUrl}'
+          id:"player",
+          file: '${videoUrl}'
         });
       </script>
     `);
   } catch (err) {
     console.error(err);
     res.send(`<pre>Unexpected error: ${err.message}</pre>`);
-  }
-});
-
-// M3U8 proxy route to fix segment paths & CORS
-app.get("/m3u8-proxy", async (req, res) => {
-  try {
-    const targetUrl = req.query.url;
-    if (!targetUrl) {
-      return res.status(400).send("Missing url parameter");
-    }
-
-    console.log(`Proxying M3U8 request to: ${targetUrl}`);
-
-    const playlistResponse = await fetch(targetUrl);
-    if (!playlistResponse.ok) {
-      return res.status(500).send(`Failed to fetch M3U8: ${playlistResponse.status}`);
-    }
-
-    let playlistText = await playlistResponse.text();
-    const baseUrl = targetUrl.substring(0, targetUrl.lastIndexOf("/"));
-
-    playlistText = playlistText.replace(/^([^#\n][^\n]*)$/gm, (line) => {
-      if (line.startsWith("http")) return line;
-      return `${baseUrl}/${line.replace(/^\//, "")}`;
-    });
-
-    res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
-    res.send(playlistText);
-  } catch (err) {
-    console.error("Error in m3u8-proxy route:", err);
-    res.status(500).send(`Error proxying M3U8: ${err.message}`);
   }
 });
 
