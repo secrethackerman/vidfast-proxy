@@ -4,7 +4,6 @@ import fetch from "node-fetch";
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// Serve the video embed proxy
 app.get("/embed/movie/:id", async (req, res) => {
   const movieId = req.params.id;
   const embedUrl = `https://vidsrc.xyz/embed/movie/${movieId}`;
@@ -15,14 +14,9 @@ app.get("/embed/movie/:id", async (req, res) => {
     if (!embedResp.ok) throw new Error(`Embed fetch failed: ${embedResp.status}`);
     const embedHtml = await embedResp.text();
 
-    // Find cloudnestra RCP URL on line 78
-    const embedLines = embedHtml.split("\n");
-    const line78 = embedLines[77] || "";
-    const matchRcp = line78.match(/\/\/cloudnestra\.com\/rcp[^\s'"]+/);
-    if (!matchRcp) {
-      console.error(`[!] Line 78: ${line78}`);
-      throw new Error("cloudnestra.com RCP link not found");
-    }
+    // Find cloudnestra RCP URL
+    const matchRcp = embedHtml.match(/\/\/cloudnestra\.com\/rcp[^\s'"]+/);
+    if (!matchRcp) throw new Error("cloudnestra.com RCP link not found");
     const cloudUrl = "https:" + matchRcp[0];
     console.log(`[2] Extracted cloudnestra URL: ${cloudUrl}`);
 
@@ -31,21 +25,17 @@ app.get("/embed/movie/:id", async (req, res) => {
     if (!prorcpResp.ok) throw new Error(`prorcp fetch failed: ${prorcpResp.status}`);
     const prorcpHtml = await prorcpResp.text();
 
-    // Get Playerjs URL on line 482
-    const prorcpLines = prorcpHtml.split("\n");
-    const line482 = prorcpLines[481] || "";
-    const matchPlayerjs = line482.match(/file:\s*['"]([^'"]+)['"]/);
-    if (!matchPlayerjs) throw new Error("Playerjs file URL not found on line 482");
-    const playerUrl = matchPlayerjs[1];
+    // Search for Playerjs file URL anywhere
+    const playerMatch = prorcpHtml.match(/file:\s*['"]([^'"]+)['"]/);
+    if (!playerMatch) throw new Error("Playerjs file URL not found in prorcp page");
+    const playerUrl = playerMatch[1];
     console.log(`[3] Extracted Playerjs URL: ${playerUrl}`);
 
     if (playerUrl.endsWith(".m3u8")) {
-      // Fetch the .m3u8 playlist
       const playlistResp = await fetch(playerUrl);
       if (!playlistResp.ok) throw new Error(`Playlist fetch failed: ${playlistResp.status}`);
       let playlistText = await playlistResp.text();
 
-      // Rewrite all segment paths to go through proxy
       playlistText = playlistText.replace(/^([^\n]*\.ts)$/gm, (match) => {
         const segmentUrl = new URL(match, playerUrl).href;
         return `/segment?url=${encodeURIComponent(segmentUrl)}`;
@@ -54,7 +44,6 @@ app.get("/embed/movie/:id", async (req, res) => {
       res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
       return res.send(playlistText);
     } else {
-      // Return normal HTML with Playerjs
       res.send(`
         <script src="//files.catbox.moe/wpjrf3.js" type="text/javascript"></script>
         <div id="player"></div>
@@ -69,7 +58,6 @@ app.get("/embed/movie/:id", async (req, res) => {
   }
 });
 
-// Proxy individual .ts segments
 app.get("/segment", async (req, res) => {
   const url = req.query.url;
   if (!url) return res.status(400).send("No URL provided");
