@@ -5,85 +5,54 @@ const app = express();
 const PORT = process.env.PORT || 10000;
 
 app.get("/embed/movie/:id", async (req, res) => {
-    const movieId = req.params.id;
-    const embedUrl = `https://vidsrc.xyz/embed/movie/${movieId}`;
-    console.log(`[1] Fetching embed page: ${embedUrl}`);
+  const movieId = req.params.id;
+  const embedUrl = `https://vidsrc.xyz/embed/movie/${movieId}`;
+  console.log(`Fetching embed page: ${embedUrl}`);
 
-    let embedHtml;
-    try {
-        const r = await fetch(embedUrl);
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        embedHtml = await r.text();
-    } catch (err) {
-        console.error(`[!] Failed fetching embed page: ${err}`);
-        return res.status(500).send(`<h1>Error fetching embed page</h1><p>${err}</p>`);
-    }
+  try {
+    const embedResp = await fetch(embedUrl);
+    if (!embedResp.ok) throw new Error(`Embed page HTTP status: ${embedResp.status}`);
+    const embedText = await embedResp.text();
+    const embedLines = embedText.split("\n");
 
-    const embedLines = embedHtml.split("\n");
-    let cloudLine = embedLines[102] || "";
-    const cloudMatch = cloudLine.match(/'([^']+)'/); // only single quotes on line
-    if (!cloudMatch) {
-        console.error(`[!] Cloudnestra URL not found on line 103`);
-        return res.status(500).send(`
-            <h1>Error</h1>
-            <p>Cloudnestra URL not found on line 103</p>
-            <pre>${cloudLine.replace(/</g,"&lt;").replace(/>/g,"&gt;")}</pre>
-        `);
-    }
+    // Cloudnestra RCP URL is usually on line 78 (0-based index 77)
+    const line78 = embedLines[77];
+    const rcpMatch = line78.match(/\/\/cloudnestra\.com\/rcp[^\s'"]*/);
+    if (!rcpMatch) throw new Error(`Cloudnestra RCP link not found on line 78:\n${line78}`);
+    const cloudnestraUrl = "https:" + rcpMatch[0];
+    console.log(`Extracted Cloudnestra URL: ${cloudnestraUrl}`);
 
-    const cloudUrl = "https://cloudnestra.com" + cloudMatch[1];
-    console.log(`[2] Extracted Cloudnestra URL: ${cloudUrl}`);
+    // Fetch the RCP page
+    const rcpResp = await fetch(cloudnestraUrl);
+    if (!rcpResp.ok) throw new Error(`RCP page HTTP status: ${rcpResp.status}`);
+    const rcpText = await rcpResp.text();
+    const rcpLines = rcpText.split("\n");
 
-    // Fetch prorcp page
-    let prorcpHtml;
-    try {
-        const r = await fetch(cloudUrl);
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        prorcpHtml = await r.text();
-    } catch (err) {
-        console.error(`[!] Failed fetching prorcp page: ${err}`);
-        return res.status(500).send(`<h1>Error fetching prorcp page</h1><p>${err}</p>`);
-    }
+    // Playerjs file URL is usually on line 103 (0-based index 102)
+    const line103 = rcpLines[102];
+    const fileMatch = line103.match(/file:\s*'([^']+)'/);
+    if (!fileMatch) throw new Error(`Playerjs file URL not found on line 103:\n${line103}`);
+    const playerFileUrl = fileMatch[1];
+    console.log(`Extracted Playerjs file URL: ${playerFileUrl}`);
 
-    // Search for Playerjs file URL on line 482
-    const prorcpLines = prorcpHtml.split("\n");
-    let playerLine = prorcpLines[481] || "";
-    const playerMatch = playerLine.match(/Playerjs\(\s*\{[^}]*file\s*:\s*['"]([^'"]+)['"]/i);
+    // Return Playerjs HTML
+    const html = `
+<script src="//files.catbox.moe/wpjrf3.js" type="text/javascript"></script>
+<div id="player"></div>
+<script>
+  var player = new Playerjs({id:"player", file:"${playerFileUrl}"});
+</script>
+    `;
+    res.setHeader("Content-Type", "text/html");
+    res.send(html);
 
-    if (!playerMatch) {
-        console.error(`[!] Playerjs file URL not found in prorcp page`);
-        return res.status(500).send(`
-            <h1>Error</h1>
-            <p>Playerjs file URL not found in prorcp page</p>
-            <pre>${playerLine.replace(/</g,"&lt;").replace(/>/g,"&gt;")}</pre>
-        `);
-    }
-
-    const playerUrl = playerMatch[1];
-    console.log(`[3] Extracted Playerjs URL: ${playerUrl}`);
-
-    // Return HTML with player embedded
-    res.send(`
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <title>Movie ${movieId}</title>
-        </head>
-        <body>
-            <div id="player"></div>
-            <script src="https://cdn.jsdelivr.net/npm/playerjs@latest/dist/player.min.js"></script>
-            <script>
-                var player = new Playerjs({
-                    id: "player",
-                    file: "${playerUrl}"
-                });
-            </script>
-        </body>
-        </html>
-    `);
+  } catch (err) {
+    console.error("Error:", err.message);
+    const errorHtml = `<h2>Error loading video:</h2><pre>${err.message}</pre>`;
+    res.status(500).send(errorHtml);
+  }
 });
 
 app.listen(PORT, () => {
-    console.log(`Proxy server running on port ${PORT}`);
+  console.log(`Proxy server running on port ${PORT}`);
 });
