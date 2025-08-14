@@ -1,88 +1,96 @@
-import express from "express";
-import fetch from "node-fetch";
+import express from 'express';
+import fetch from 'node-fetch';
 
 const app = express();
-const PORT = process.env.PORT || 10000;
+const PORT = 3000;
 
-app.get("/embed/movie/:id", async (req, res) => {
-  const movieId = req.params.id;
-  const embedUrl = `https://vidsrc.xyz/embed/movie/${movieId}`;
+app.get('/movie/:id', async (req, res) => {
+  const { id } = req.params;
+  const embedUrl = `https://vidsrc.xyz/embed/movie/${id}`;
 
   try {
-    console.log(`Fetching embed page: ${embedUrl}`);
-    const embedResp = await fetch(embedUrl);
-    if (!embedResp.ok) throw new Error(`Failed to fetch embed page: ${embedResp.status}`);
+    // Step 1: Fetch Vidsrc embed page
+    const embedRes = await fetch(embedUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0' }
+    });
+    const embedHtml = await embedRes.text();
 
-    const embedText = await embedResp.text();
-    const embedLines = embedText.split("\n");
-
-    // Look for the cloudnestra prorcp link on line 78
-    const line78 = embedLines[77] || "";
-    const cloudMatch = line78.match(/\/\/cloudnestra\.com\/[^'"\s]+/);
-    if (!cloudMatch) {
-      console.error(`Cloudnestra URL not found on line 78: ${line78}`);
-      return res.send(`<pre>Cloudnestra URL not found on line 78:\n${line78}</pre>`);
+    // Step 2: Extract Cloudnestra iframe src from line 78
+    const embedLines = embedHtml.split('\n');
+    if (embedLines.length < 78) {
+      return res.status(404).send(`Embed page too short to contain Cloudnestra iframe.
+Embed URL: ${embedUrl}`);
+    }
+    let line78 = embedLines[77];
+    const srcMatch = line78.match(/src="([^"]+)"/);
+    if (!srcMatch) {
+      return res.status(404).send(`Could not find Cloudnestra iframe src in line 78.
+Line content: ${line78}`);
     }
 
-    let prorcpUrl = "https:" + cloudMatch[0];
-    console.log(`Extracted cloudnestra URL: ${prorcpUrl}`);
-
-    // Fetch prorcp page
-    const prorcpResp = await fetch(prorcpUrl);
-    if (!prorcpResp.ok) throw new Error(`Failed to fetch prorcp page: ${prorcpResp.status}`);
-
-    const prorcpText = await prorcpResp.text();
-    const prorcpLines = prorcpText.split("\n");
-
-    // Look for Playerjs file URL on line 103
-    const line103 = prorcpLines[102] || "";
-    const fileMatch = line103.match(/src:\s*'([^']+)'/);
-    if (!fileMatch) {
-      console.error(`Playerjs file URL not found on line 103:\n${line103}`);
-      return res.send(`<pre>Playerjs file URL not found on line 103:\n${line103}</pre>`);
+    // Step 3: Normalize URL
+    let cloudIframeUrl = srcMatch[1];
+    if (cloudIframeUrl.startsWith('//')) {
+      cloudIframeUrl = 'https:' + cloudIframeUrl;
+    } else if (!cloudIframeUrl.startsWith('http')) {
+      cloudIframeUrl = new URL(cloudIframeUrl, 'https://vidsrc.xyz').href;
     }
 
-    let playerFileUrl = fileMatch[1];
-    if (playerFileUrl.startsWith("/")) {
-      playerFileUrl = "https://cloudnestra.com" + playerFileUrl;
+    // Step 4: Fetch Cloudnestra iframe page
+    const cloudRes = await fetch(cloudIframeUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0' }
+    });
+    const cloudHtml = await cloudRes.text();
+
+    // Step 5: Extract path from line 103, column ~20
+    const cloudLines = cloudHtml.split('\n');
+    if (cloudLines.length < 103) {
+      return res.status(404).send(`Cloudnestra iframe page too short.
+Cloud iframe URL: ${cloudIframeUrl}`);
     }
-    console.log(`Playerjs file URL: ${playerFileUrl}`);
-
-    // Fetch Playerjs file page
-    const playerResp = await fetch(playerFileUrl);
-    if (!playerResp.ok) throw new Error(`Failed to fetch Playerjs file: ${playerResp.status}`);
-
-    const playerText = await playerResp.text();
-    const playerLines = playerText.split("\n");
-
-    // Look for line 482 (Playerjs video file)
-    const line482 = playerLines[481] || "";
-    const videoMatch = line482.match(/file:\s*'([^']+)'/);
-    if (!videoMatch) {
-      console.error(`Playerjs file URL not found on line 482:\n${line482}`);
-      return res.send(`<pre>Playerjs file URL not found on line 482:\n${line482}</pre>`);
+    const line103 = cloudLines[102];
+    const pathMatch = line103.match(/['"]([^'"]+)['"]/);
+    if (!pathMatch) {
+      return res.status(404).send(`Could not find path in line 103.
+Line content: ${line103}`);
     }
 
-    const videoUrl = videoMatch[1];
-    console.log(`Extracted video URL: ${videoUrl}`);
+    const cloudPath = pathMatch[1];
+    const finalUrl = `https://cloudnestra.com${cloudPath}`;
 
-    // Return HTML with embedded Playerjs
-    res.send(`
-      <script src="//files.catbox.moe/wpjrf3.js" type="text/javascript"></script>
-      <div id="player"></div>
-      <script>
-        var player = new Playerjs({
-          id:"player",
-          file: '${videoUrl}'
-        });
-      </script>
-    `);
+    // Step 6: Fetch the final Cloudnestra media page
+    const mediaRes = await fetch(finalUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0' }
+    });
+    const mediaHtml = await mediaRes.text();
+
+    // Step 7: Extract file URL from line 482, after 69 characters
+    const mediaLines = mediaHtml.split('\n');
+    if (mediaLines.length < 482) {
+      return res.status(404).send(`Media page too short.
+Cloudnestra media URL: ${finalUrl}`);
+    }
+    const line482 = mediaLines[481];
+    const fileUrl = line482.slice(69).replace(/['";]+/g, '').trim(); // clean quotes/semicolon
+
+    // Step 8: Return HTML snippet with Playerjs
+    const playerHtml = `
+<script src="//files.catbox.moe/wpjrf3.js" type="text/javascript"></script>
+<div id="player"></div>
+
+<script>
+   var player = new Playerjs({id:"player", file:"${fileUrl}"});
+</script>
+    `;
+
+    res.type('text/html').send(playerHtml);
+
   } catch (err) {
     console.error(err);
-    res.send(`<pre>Unexpected error: ${err.message}</pre>`);
+    res.status(500).send(`Unexpected error: ${err.message}`);
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`Proxy server running on port ${PORT}`);
+  console.log(`Proxy running at http://localhost:${PORT}/movie/{id}`);
 });
